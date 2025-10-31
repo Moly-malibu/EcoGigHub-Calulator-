@@ -284,7 +284,8 @@ def generate_pdf_cert(trees, total_save, api_name):
 # -------------------------------------------------
 # MAIN
 # -------------------------------------------------
-st.markdown('<div class="hero"><h1>EcoGigHub CO₂ Impact Pro</h1><h3>Track. Reduce. Share. Plant. Win Badges.</h3></div>', unsafe_allow_html=True)
+
+st.markdown('<div class="hero"><h1>EcoGigHub CO₂ Impact Pro</h1><h2>Calculator</h2><h3>Track. Reduce. Share. Plant. Win Badges.</h3></div>', unsafe_allow_html=True)
 
 col_left, col_right = st.columns([1, 3])
 
