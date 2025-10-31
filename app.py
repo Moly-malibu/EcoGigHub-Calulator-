@@ -8,6 +8,7 @@ import base64
 from io import BytesIO
 from PIL import Image, ImageDraw, ImageFont
 import urllib.parse
+from supabase import create_client, Client
 
 # -------------------------------------------------
 # CONFIG
@@ -24,7 +25,12 @@ TREE_CO2_YEAR = 20.0
 CAR_MILES_PER_KG = 4.6
 FLIGHT_KG_PER_HOUR = 90.0
 
-# API (Safe defaults)
+# Supabase
+SUPABASE_URL = st.secrets.get("SUPABASE_URL")
+SUPABASE_KEY = st.secrets.get("SUPABASE_KEY")
+supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY) if SUPABASE_URL and SUPABASE_KEY else None
+
+# API
 WALDONIA_BASE = "https://api.waldonia.com/v1"
 WALDONIA_KEY = st.secrets.get("WALDONIA_API_KEY", "sandbox_key")
 ECOLOGI_BASE = "https://publicapi.ecologi.com/v1"
@@ -32,7 +38,7 @@ ECOLOGI_KEY = st.secrets.get("ECOLOGI_API_KEY", "sandbox_key")
 ECOLOGI_USERNAME = st.secrets.get("ECOLOGI_USERNAME", "demo_user")
 
 # -------------------------------------------------
-# PROFESSIONAL STYLES
+# STYLES
 # -------------------------------------------------
 st.markdown("""
 <style>
@@ -47,9 +53,6 @@ st.markdown("""
     [data-testid="stSidebar"] {background: #e8f5e8; border-right: 1px solid #d0e8d0;}
     h1, h2, h3 {color: var(--primary); font-family: 'Segoe UI', sans-serif;}
     .hero {text-align:center; background:linear-gradient(135deg, #e8f5e8, #d0f0c0); border-radius:20px; padding:2.5rem; margin-bottom:2rem; box-shadow: var(--shadow);}
-    .metric-card {background: var(--card); border-radius:16px; padding:1.5rem; text-align:center; box-shadow: var(--shadow); border: 1px solid #e0e0e0;}
-    .metric-title {color: #555; font-weight:600; font-size:0.9rem;}
-    .metric-value {font-size:2.2rem; color: var(--primary); font-weight:800;}
     .stButton>button {background: var(--accent); color:white; border:none; border-radius:30px; font-weight:600; padding:0.6rem 1.4rem; transition:all 0.3s ease; box-shadow: 0 2px 6px rgba(81,207,102,0.3);}
     .stButton>button:hover {background:#36b854; transform:translateY(-2px); box-shadow:0 4px 12px rgba(81,207,102,0.4);}
     .eco-badge {background:#51CF66; color:white; padding:5px 12px; border-radius:14px; font-weight:600; font-size:0.8rem;}
@@ -61,6 +64,7 @@ st.markdown("""
     td {padding:12px 14px; border-bottom:1px solid #eee;}
     .buy-btn {background:#145A32; color:white; padding:6px 14px; border-radius:12px; font-size:0.85rem; text-decoration:none; font-weight:600;}
     .buy-btn:hover {background:#0e3f24;}
+    .leaderboard-card {background: var(--card); border-radius:16px; padding:1.5rem; box-shadow: var(--shadow); border: 1px solid #e0e0e0;}
 </style>
 """, unsafe_allow_html=True)
 
@@ -90,7 +94,6 @@ REQUIRED_COLS = [
     "CO₂ Regular", "CO₂ Eco", "Savings", "Total $"
 ]
 
-# Initialize with correct dtypes
 if "basket" not in st.session_state:
     st.session_state.basket = pd.DataFrame(columns=REQUIRED_COLS).astype({
         "Quantity": "int64",
@@ -107,7 +110,7 @@ if "impacts" not in st.session_state:
     st.session_state.impacts = []
 
 # -------------------------------------------------
-# SAFE FUNCTIONS
+# FUNCTIONS
 # -------------------------------------------------
 def variant_badge(variant):
     eco_keys = ["eco","bio","vegan","plant-based","oat","fair-trade","local","reusable","electric","green","low-voc","sustainable"]
@@ -120,48 +123,30 @@ def add_item(category, item, variant, qty):
     try:
         data = products if category == "Products" else gigs
         d = data.get(item, {})
-        if not d:
-            st.error(f"Item {item} not found.")
-            return st.session_state.basket
-
+        if not d: return st.session_state.basket
         reg_key = next((k for k in ["regular","standard"] if k in d), list(d.keys())[0])
         unit_co2_reg = float(d.get(reg_key, 0))
         unit_co2_eco = float(d.get(variant, 0))
         unit_price = float(d.get("price", 0))
-
         new_row = pd.DataFrame([{
-            "Category": category,
-            "Item": item,
-            "Variant": variant,
-            "Quantity": int(qty),
-            "Unit CO₂ Regular": unit_co2_reg,
-            "Unit CO₂ Eco": unit_co2_eco,
-            "Unit Price": unit_price,
-            "CO₂ Regular": round(qty * unit_co2_reg, 3),
-            "CO₂ Eco": round(qty * unit_co2_eco, 3),
-            "Savings": round(qty * (unit_co2_reg - unit_co2_eco), 3),
-            "Total $": round(qty * unit_price, 2)
+            "Category": category, "Item": item, "Variant": variant, "Quantity": int(qty),
+            "Unit CO₂ Regular": unit_co2_reg, "Unit CO₂ Eco": unit_co2_eco, "Unit Price": unit_price,
+            "CO₂ Regular": round(qty * unit_co2_reg, 3), "CO₂ Eco": round(qty * unit_co2_eco, 3),
+            "Savings": round(qty * (unit_co2_reg - unit_co2_eco), 3), "Total $": round(qty * unit_price, 2)
         }])
         return pd.concat([st.session_state.basket, new_row], ignore_index=True)
-    except Exception as e:
-        st.error(f"Add error: {e}")
-        return st.session_state.basket
+    except: return st.session_state.basket
 
 def recalculate(df):
-    if df.empty:
-        return pd.DataFrame(columns=REQUIRED_COLS)
-
+    if df.empty: return pd.DataFrame(columns=REQUIRED_COLS)
     df = df.copy()
-    # Force numeric
     for col in ["Quantity", "Unit CO₂ Regular", "Unit CO₂ Eco", "Unit Price"]:
         df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
-
     df["Quantity"] = df["Quantity"].astype(int)
     df["CO₂ Regular"] = (df["Quantity"] * df["Unit CO₂ Regular"]).round(3)
     df["CO₂ Eco"] = (df["Quantity"] * df["Unit CO₂ Eco"]).round(3)
     df["Savings"] = (df["CO₂ Regular"] - df["CO₂ Eco"]).round(3)
     df["Total $"] = (df["Quantity"] * df["Unit Price"]).round(2)
-
     return df[df["Quantity"] > 0].copy()
 
 def totals(df):
@@ -214,7 +199,7 @@ def create_stripe_session(amount_cents, description, metadata=None):
         )
         return session.url
     except Exception as e:
-        st.error(f"Payment setup failed: {e}")
+        st.error(f"Payment error: {e}")
         return None
 
 def verify_stripe_session(session_id):
@@ -254,14 +239,12 @@ def generate_pdf_cert(trees, total_save, api_name):
     except:
         font_title = ImageFont.load_default()
         font_body = font_title
-
     draw.text((80, 100), "EcoGigHub Impact Certificate", fill=(20, 90, 50), font=font_title)
     draw.text((80, 200), f"Trees Planted: {trees}", fill=(0, 100, 0), font=font_body)
     draw.text((80, 260), f"CO₂ Saved: {total_save:,.0f} kg", fill=(0, 100, 0), font=font_body)
     draw.text((80, 320), f"Provider: {api_name}", fill=(0, 100, 0), font=font_body)
     draw.text((80, 380), f"Date: {datetime.now():%B %d, %Y}", fill=(0, 100, 0), font=font_body)
     draw.text((80, 460), "Thank you for choosing sustainability!", fill=(0, 120, 0), font=font_body)
-
     buf = BytesIO()
     img.save(buf, format="PDF")
     buf.seek(0)
@@ -271,7 +254,7 @@ def generate_pdf_cert(trees, total_save, api_name):
 # -------------------------------------------------
 # MAIN
 # -------------------------------------------------
-st.markdown('<div class="hero"><h1>EcoGigHub CO₂ Impact Pro</h1><h3>Track. Reduce. Share. Plant. Certify.</h3></div>', unsafe_allow_html=True)
+st.markdown('<div class="hero"><h1>EcoGigHub CO₂ Impact Pro</h1><h3>Calculator</h3></div>', unsafe_allow_html=True)
 
 col_left, col_right = st.columns([1, 3])
 
@@ -295,9 +278,7 @@ with col_left:
             st.session_state.basket[["Item", "Variant", "Quantity"]].copy(),
             use_container_width=True,
             hide_index=True,
-            column_config={
-                "Quantity": st.column_config.NumberColumn("Qty", min_value=0, step=1, format="%d")
-            },
+            column_config={"Quantity": st.column_config.NumberColumn("Qty", min_value=0, step=1, format="%d")},
             key="basket_editor"
         )
         df_tmp = st.session_state.basket.copy()
@@ -345,6 +326,7 @@ with col_right:
         m2.metric("Eco", f"{total_eco:,} kg")
         m3.metric("Saved", f"{total_save:,} kg", delta=f"+{total_save:,} kg")
 
+        # TABLE
         st.markdown("### Your Eco Choices")
         table_html = '<table><thead><tr><th>Item</th><th>Choice</th><th>Qty</th><th>Saved</th><th>Price</th><th>Action</th></tr></thead><tbody>'
         for idx, r in df.iterrows():
@@ -355,6 +337,56 @@ with col_right:
         table_html += '</tbody></table>'
         st.markdown(table_html, unsafe_allow_html=True)
 
+        # REAL LEADERBOARD (SUPABASE)
+        st.markdown("## Leaderboard")
+        user_name = st.text_input("Your Name/Email to Join", placeholder="Ana or ana@example.com", key="leaderboard_name")
+
+        # Fetch from Supabase
+        if supabase:
+            try:
+                response = supabase.table("leaderboard").select("*").order("co2_saved", desc=True).limit(10).execute()
+                leaders = response.data
+            except:
+                leaders = []
+                st.warning("Leaderboard loading...")
+        else:
+            leaders = []
+
+        # Add user if claimed
+        if user_name and total_save > 0 and st.button("Claim Your Rank!", type="primary", key="claim_rank"):
+            if supabase:
+                try:
+                    supabase.table("leaderboard").upsert({
+                        "user_name": user_name,
+                        "co2_saved": int(total_save),
+                        "trees_planted": int(trees_saved)
+                    }, on_conflict="user_name").execute()
+                    st.success("Rank claimed!")
+                    st.balloons()
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Save failed: {e}")
+            else:
+                st.warning("Supabase not connected. Using demo.")
+
+        # Display
+        if leaders:
+            leaders_df = pd.DataFrame(leaders)
+            leaders_df["rank"] = range(1, len(leaders_df) + 1)
+            st.dataframe(
+                leaders_df[["rank", "user_name", "co2_saved", "trees_planted"]].rename(columns={"user_name": "name", "trees_planted": "trees"}),
+                use_container_width=True,
+                column_config={
+                    "rank": st.column_config.NumberColumn("Rank", format="%d"),
+                    "co2_saved": st.column_config.NumberColumn("CO₂ Saved (kg)", format="%.0f"),
+                    "trees": st.column_config.NumberColumn("Trees", format="%d")
+                },
+                hide_index=True
+            )
+        else:
+            st.info("Be the first to claim your rank!")
+
+        # PLANT & OFFSET
         st.markdown("## Plant Trees & Offset")
         email = st.text_input("Email for certificate", placeholder="you@example.com", key="email_cert")
 
