@@ -16,12 +16,14 @@ from supabase import create_client, Client
 st.set_page_config(page_title="EcoGigHub CO₂ Impact Pro", page_icon="leaf", layout="wide")
 
 # Secrets
-stripe.api_key = st.secrets.get("stripe_api_key", "sk_test_dummy")
+stripe.api_key = st.secrets.get("stripe_api_key", "sk_test_XXXXXXXXXXXXXXXXXXXXXXXX")
 BASE_URL = st.secrets.get("base_url", "http://localhost:8501")
 SUCCESS_URL = f"{BASE_URL}/?session_id={{CHECKOUT_SESSION_ID}}"
 CANCEL_URL = BASE_URL
 
 TREE_CO2_YEAR = 20.0
+CAR_MILES_PER_KG = 4.6
+FLIGHT_KG_PER_HOUR = 90.0
 
 # Supabase
 SUPABASE_URL = st.secrets.get("SUPABASE_URL")
@@ -62,9 +64,7 @@ st.markdown("""
     td {padding:12px 14px; border-bottom:1px solid #eee;}
     .buy-btn {background:#145A32; color:white; padding:6px 14px; border-radius:12px; font-size:0.85rem; text-decoration:none; font-weight:600;}
     .buy-btn:hover {background:#0e3f24;}
-    .badge-card {background: linear-gradient(135deg, #e8f5e8, #d0f0c0); border-radius:16px; padding:1rem; text-align:center; box-shadow: var(--shadow); border: 1px solid #a8e6a8;}
-    .badge-title {font-weight:800; color:#145A32; margin:0.5rem 0;}
-    .badge-desc {font-size:0.9rem; color:#0e3f24;}
+    .leaderboard-card {background: var(--card); border-radius:16px; padding:1.5rem; box-shadow: var(--shadow); border: 1px solid #e0e0e0;}
 </style>
 """, unsafe_allow_html=True)
 
@@ -108,36 +108,6 @@ if "basket" not in st.session_state:
 
 if "impacts" not in st.session_state:
     st.session_state.impacts = []
-
-# -------------------------------------------------
-# BADGES SYSTEM
-# -------------------------------------------------
-BADGES = [
-    {"name": "First Step", "icon": "Leaf", "threshold": 10, "desc": "Saved 10 kg CO₂"},
-    {"name": "Eco Warrior", "icon": "trophy", "threshold": 100, "desc": "Saved 100 kg CO₂"},
-    {"name": "Tree Hugger", "icon": "tree", "threshold": 5, "desc": "Planted 5 trees"},
-    {"name": "Carbon Killer", "icon": "fire", "threshold": 1000, "desc": "Saved 1 ton CO₂"},
-    {"name": "Viral Hero", "icon": "share", "threshold": 3, "desc": "Invited 3 friends"},
-]
-
-def check_badges(total_save, trees_planted, shares=0):
-    earned = []
-    for badge in BADGES:
-        if (badge["threshold"] == 10 and total_save >= 10) or \
-           (badge["threshold"] == 100 and total_save >= 100) or \
-           (badge["threshold"] == 5 and trees_planted >= 5) or \
-           (badge["threshold"] == 1000 and total_save >= 1000) or \
-           (badge["threshold"] == 3 and shares >= 3):
-            earned.append(badge)
-    return earned
-
-def display_badge(badge):
-    st.markdown(f"""
-    <div class="badge-card">
-        <h3 class="badge-title">{badge['icon']} {badge['name']}</h3>
-        <p class="badge-desc">{badge['desc']}</p>
-    </div>
-    """, unsafe_allow_html=True)
 
 # -------------------------------------------------
 # FUNCTIONS
@@ -284,7 +254,7 @@ def generate_pdf_cert(trees, total_save, api_name):
 # -------------------------------------------------
 # MAIN
 # -------------------------------------------------
-st.markdown('<div class="hero"><h1>EcoGigHub CO₂ Impact Pro</h1><h3>Track. Reduce. Share. Plant. Win Badges.</h3></div>', unsafe_allow_html=True)
+st.markdown('<div class="hero"><h1>EcoGigHub CO₂ Impact Pro</h1><h3>Calculator</h3></div>', unsafe_allow_html=True)
 
 col_left, col_right = st.columns([1, 3])
 
@@ -356,17 +326,6 @@ with col_right:
         m2.metric("Eco", f"{total_eco:,} kg")
         m3.metric("Saved", f"{total_save:,} kg", delta=f"+{total_save:,} kg")
 
-        # BADGES
-        st.markdown("## Your Badges")
-        earned_badges = check_badges(total_save, int(trees_saved))
-        if earned_badges:
-            cols = st.columns(len(earned_badges))
-            for col, badge in zip(cols, earned_badges):
-                with col:
-                    display_badge(badge)
-        else:
-            st.info("Save more CO₂ to unlock badges!")
-
         # TABLE
         st.markdown("### Your Eco Choices")
         table_html = '<table><thead><tr><th>Item</th><th>Choice</th><th>Qty</th><th>Saved</th><th>Price</th><th>Action</th></tr></thead><tbody>'
@@ -378,20 +337,22 @@ with col_right:
         table_html += '</tbody></table>'
         st.markdown(table_html, unsafe_allow_html=True)
 
-        # LEADERBOARD
+        # REAL LEADERBOARD (SUPABASE)
         st.markdown("## Leaderboard")
         user_name = st.text_input("Your Name/Email to Join", placeholder="Ana or ana@example.com", key="leaderboard_name")
 
+        # Fetch from Supabase
         if supabase:
             try:
                 response = supabase.table("leaderboard").select("*").order("co2_saved", desc=True).limit(10).execute()
                 leaders = response.data
             except:
                 leaders = []
-                st.warning("Loading leaderboard...")
+                st.warning("Leaderboard loading...")
         else:
             leaders = []
 
+        # Add user if claimed
         if user_name and total_save > 0 and st.button("Claim Your Rank!", type="primary", key="claim_rank"):
             if supabase:
                 try:
@@ -406,8 +367,9 @@ with col_right:
                 except Exception as e:
                     st.error(f"Save failed: {e}")
             else:
-                st.warning("Supabase not connected.")
+                st.warning("Supabase not connected. Using demo.")
 
+        # Display
         if leaders:
             leaders_df = pd.DataFrame(leaders)
             leaders_df["rank"] = range(1, len(leaders_df) + 1)
@@ -422,7 +384,7 @@ with col_right:
                 hide_index=True
             )
         else:
-            st.info("Be the first!")
+            st.info("Be the first to claim your rank!")
 
         # PLANT & OFFSET
         st.markdown("## Plant Trees & Offset")
